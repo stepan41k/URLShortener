@@ -2,14 +2,18 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 
+	"github.com/jackc/pgx"
 	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/stepan41k/FullRestAPI/internal/storage"
 )
 
 type Storage struct {
-	mu sync.Mutex
+	mu   sync.Mutex
 	pool *pgxpool.Pool
 }
 
@@ -22,18 +26,75 @@ func New(storagePath string) (*Storage, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	defer pool.Close()
-
 	_, err = pool.Exec(context.Background(), `
 	CREATE TABLE IF NOT EXISTS url(
-		id INTEGER PRIMARY KEY,
+		id serial PRIMARY KEY,
 		alias TEXT NOT NULL UNIQUE,
 		url TEXT NOT NULL);
-	CREATE INDEX IF NOT EXISTS idx_alias ON url(alias);
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	return &Storage{}, nil
+	return &Storage{mu: sync.Mutex{}, pool: pool}, nil
+}
+
+func (s *Storage) SaveURL(urlToSave string, alias string) (id int64, err error) {
+	const op = "storage.postgres.SaveURL"
+
+	err = s.pool.QueryRow(context.Background(), `
+		INSERT INTO url (alias, url)
+		VALUES ($1, $2)
+		RETURNING id;`,
+		alias,
+		urlToSave,
+	).Scan(&id)
+
+	if err != nil {
+		if pgerr, ok := err.(pgx.PgError); ok && pgerr.ConstraintName == "unique_alias" {
+			return 0, fmt.Errorf("%s: %w", op, storage.ErrURLExists)
+		}
+
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	//TODO: refactor unique
+
+	return id, nil
+}
+
+func (s *Storage) GetURL(alias string) (string, error) {
+	const op = "storage.postgres.GetURL"
+	var url string
+
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT url
+		FROM url
+		WHERE alias = $1;
+	`, alias).Scan(&url)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", storage.ErrURLNotFound
+		}
+
+		return "", fmt.Errorf("%s: %w", op, err)
+	}
+
+	return url, nil
+}
+
+func (s *Storage) DeleteURL(alias string) error {
+	const op = "storage.postgres.DeleteURL"
+	
+	_ , err := s.pool.Exec(context.Background(), `
+		DELETE FROM url
+		WHERE alias = $1
+	`, alias)
+
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	return nil
 }
