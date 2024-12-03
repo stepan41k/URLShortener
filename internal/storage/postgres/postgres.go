@@ -39,10 +39,11 @@ func New(storagePath string) (*Storage, error) {
 	return &Storage{mu: sync.Mutex{}, pool: pool}, nil
 }
 
-func (s *Storage) SaveURL(urlToSave string, alias string) (id int64, err error) {
+func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
 	const op = "storage.postgres.SaveURL"
+	var id int64
 
-	err = s.pool.QueryRow(context.Background(), `
+	err := s.pool.QueryRow(context.Background(), `
 		INSERT INTO url (alias, url)
 		VALUES ($1, $2)
 		RETURNING id;`,
@@ -86,13 +87,19 @@ func (s *Storage) GetURL(alias string) (string, error) {
 
 func (s *Storage) DeleteURL(alias string) error {
 	const op = "storage.postgres.DeleteURL"
-	
-	_ , err := s.pool.Exec(context.Background(), `
+	var id int
+
+	err := s.pool.QueryRow(context.Background(), `
 		DELETE FROM url
 		WHERE alias = $1
-	`, alias)
+		RETURNING id;
+	`, alias).Scan(&id)
 
-	if err != nil {
+	if err != nil || id == 0 {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storage.ErrURLNotFound
+		}
+
 		return fmt.Errorf("%s: %w", op, err)
 	}
 

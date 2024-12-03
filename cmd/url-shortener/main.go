@@ -2,13 +2,17 @@ package main
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/stepan41k/FullRestAPI/internal/config"
+	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/url/save"
 	nwLogger "github.com/stepan41k/FullRestAPI/internal/http-server/middleware/logger"
 	"github.com/stepan41k/FullRestAPI/internal/lib/logger/handlers/slogpretty"
+	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/redirect"
+	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/url/delete"
 	"github.com/stepan41k/FullRestAPI/internal/lib/logger/sl"
 	"github.com/stepan41k/FullRestAPI/internal/storage/postgres"
 )
@@ -35,22 +39,41 @@ func main() {
 		os.Exit(1)
 	}
 
-	_ = storage
-
 	router := chi.NewRouter()
 
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	//router.Use(middleware.RealIP)
+	// router.Use(middleware.Logger)
 	router.Use(nwLogger.New(log))
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.URLFormat)
 
+	router.Route("/url", func(r chi.Router) {
+		r.Use(middleware.BasicAuth("url-shortener", map[string]string{
+			cfg.HTTPServer.User: cfg.HTTPServer.Password,
+		}))
 
-	//middleware
+		r.Post("/", save.New(log, storage))
+		r.Delete("/{alias}", delete.New(log, storage))
+	})
 
-	//TODO: init router: chi, chi-render
+	router.Get("/{alias}", redirect.New(log, storage))
+	
+	log.Info("starting server", slog.String("address", cfg.Address))
 
-	//TODO: run server:
+	srv := &http.Server{
+		Addr: cfg.Address,
+		Handler: router,
+		ReadTimeout: cfg.HTTPServer.Timeout,
+		WriteTimeout: cfg.HTTPServer.Timeout,
+		IdleTimeout: cfg.HTTPServer.IdleTimeout,
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
+		log.Error("failed to start server")
+	}
+
+	log.Error("server stopped")
 
 }
 
