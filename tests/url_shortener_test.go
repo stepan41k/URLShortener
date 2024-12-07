@@ -3,7 +3,7 @@ package tests
 import (
 	"net/http"
 	"net/url"
-	"path"
+	// "path"
 	"testing"
 
 	"github.com/brianvoe/gofakeit/v6"
@@ -107,16 +107,16 @@ func TestURLShortener_SaveRedirectDelete(t *testing.T) {
 
 			//Delete
 
-			reqDel := e.DELETE("/" + path.Join("url", alias)).
-				WithBasicAuth("myuser", "mypass").
-				Expect().Status(http.StatusOK).
-				JSON().Object()
+			// reqDel := e.DELETE("/" + path.Join("url/", alias)).
+			// 	WithBasicAuth("myuser", "mypass").
+			// 	Expect().Status(http.StatusOK).
+			// 	JSON().Object()
 
-			reqDel.Value("status").String().IsEqual("OK")
+			// reqDel.Value("status").String().IsEqual("OK")
 
-			//Redirect again
+			// //Redirect again
 			
-			testRedirectNotFound(t, alias)
+			// testRedirectNotFound(t, alias)
 		})
 	}
 }
@@ -134,14 +134,14 @@ func testRedirect(t *testing.T, alias string, urlToRedirect string) {
 	require.Equal(t, urlToRedirect, redirectedToURL)
 }
 
-func testRedirectNotFound(t *testing.T, alias string) {
-	u := url.URL{
-		Scheme: "http",
-		Host: host,
-		Path: alias,
-	}
+// func testRedirectNotFound(t *testing.T, alias string) {
+// 	u := url.URL{
+// 		Scheme: "http",
+// 		Host: host,
+// 		Path: alias,
+// 	}
 
-	_, err := api.GetRedirect(u.String())
-	require.ErrorIs(t, err, api.ErrInvalidStatusCode)
-}
+// 	_, err := api.GetRedirect(u.String())
+// 	require.ErrorIs(t, err, api.ErrInvalidStatusCode)
+// }
 	

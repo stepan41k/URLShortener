@@ -96,7 +96,7 @@ func (s *Storage) DeleteURL(alias string) error {
 	`, alias).Scan(&id)
 
 	if err != nil || id == 0 {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) || id == 0 {
 			return storage.ErrURLNotFound
 		}
 
