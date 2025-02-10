@@ -1,19 +1,22 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/stepan41k/FullRestAPI/internal/config"
+	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/redirect"
+	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/url/delete"
 	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/url/save"
 	nwLogger "github.com/stepan41k/FullRestAPI/internal/http-server/middleware/logger"
 	"github.com/stepan41k/FullRestAPI/internal/lib/logger/handlers/slogpretty"
-	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/redirect"
-	"github.com/stepan41k/FullRestAPI/internal/http-server/handlers/url/delete"
 	"github.com/stepan41k/FullRestAPI/internal/lib/logger/sl"
+	eventsender "github.com/stepan41k/FullRestAPI/internal/services/event-sender"
 	"github.com/stepan41k/FullRestAPI/internal/storage/postgres"
 )
 
@@ -68,6 +71,9 @@ func main() {
 		WriteTimeout: cfg.HTTPServer.Timeout,
 		IdleTimeout: cfg.HTTPServer.IdleTimeout,
 	}
+
+	sender := eventsender.New(storage, log)
+	sender.StartProcessEvents(context.Background(), 5*time.Second)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("failed to start server")

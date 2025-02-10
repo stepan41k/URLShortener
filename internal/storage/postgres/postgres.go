@@ -5,45 +5,73 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 
-	"github.com/jackc/pgx"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v4"
+	"github.com/stepan41k/FullRestAPI/internal/domain"
 	"github.com/stepan41k/FullRestAPI/internal/storage"
 )
 
 type Storage struct {
-	mu   sync.Mutex
-	pool *pgxpool.Pool
+	px *pgx.Conn
 }
+
+const (
+	statusURLCreated = "URLCreated"
+)
 
 func New(storagePath string) (*Storage, error) {
 	const op = "storage.postgres.New"
 
-	pool, err := pgxpool.Connect(context.Background(), storagePath)
+	connect, err := pgx.Connect(context.Background(), storagePath)
 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	_, err = pool.Exec(context.Background(), `
+	_, err = connect.Exec(context.Background(), `
 	CREATE TABLE IF NOT EXISTS url(
-		id serial PRIMARY KEY,
+		id SERIAL PRIMARY KEY,
 		alias TEXT NOT NULL UNIQUE,
 		url TEXT NOT NULL);
+
+	CREATE TABLE IF NOT EXISTS events (
+		id SERIAL PRIMARY KEY,
+		event_type TEXT NOT NULL,
+		payload TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'new' CHECK(status IN('new', 'done')),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
+
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	return &Storage{mu: sync.Mutex{}, pool: pool}, nil
+	return &Storage{px: connect}, nil
 }
 
-func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
+func (s *Storage) SaveURL(urlToSave string, alias string) (id int64, err error) {
 	const op = "storage.postgres.SaveURL"
-	var id int64
 
-	err := s.pool.QueryRow(context.Background(), `
+	tx, err := s.px.Begin(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(context.Background())
+			return
+		}
+
+		commitErr := tx.Commit(context.Background())
+		if commitErr != nil {
+			err = fmt.Errorf("%s: %w", op, commitErr)
+		}
+
+	}()
+
+	err = tx.QueryRow(context.Background(), `
 		INSERT INTO url (alias, url)
 		VALUES ($1, $2)
 		RETURNING id;`,
@@ -52,23 +80,101 @@ func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
 	).Scan(&id)
 
 	if err != nil {
-		if pgerr, ok := err.(pgx.PgError); ok && pgerr.ConstraintName == "unique_alias" {
-			return 0, fmt.Errorf("%s: %w", op, storage.ErrURLExists)
-		}
+		// if pgerr, ok := err.(pgx.PgError); ok && pgerr.ConstraintName == "unique_alias" {
+		// 	return 0, fmt.Errorf("%s: %w", op, storage.ErrURLExists)
+		// }
 
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 
-	//TODO: refactor unique
+	eventPayload := fmt.Sprintf(
+		`{"id": %d, "url": "%s", "alias": "%s"}`,
+		id,
+		urlToSave,
+		alias,
+	)
+
+	if err := s.saveEvent(tx, statusURLCreated, eventPayload); err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
 
 	return id, nil
+}
+
+func (s *Storage) saveEvent(tx pgx.Tx, eventType string, payload string) error {
+	const op = "storage.postgres.saveEvent"
+
+	stmt, err := tx.Prepare(context.Background(), "my-query", "INSERT INTO events(event_type, payload) VALUES($1, $2)")
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	_, err = tx.Exec(context.Background(), stmt.Name, eventType, payload)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	return nil
+
+}
+
+type event struct {
+	ID      int    `db:"id"`
+	Type    string `db:"event_type"`
+	Payload string `db:"payload"`
+}
+
+func (s *Storage) GetNewEvent(ctx context.Context) (domain.Event, error) {
+	const op = "storage.postgres.GetNewEvent"
+
+	//TODO: Научиться обрабатывать батчами
+	row := s.px.QueryRow(context.Background(), `
+		SELECT id, event_type, payload
+		FROM events
+		WHERE status = 'new'
+		LIMIT 1
+	`)
+
+	var evt event
+
+	err := row.Scan(&evt.ID, &evt.Type, &evt.Payload)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Event{}, nil
+		}
+
+		return domain.Event{}, fmt.Errorf("%s: %w", op, err)
+	}
+
+	return domain.Event{
+		ID: evt.ID,
+		Type: evt.Type,
+		Payload: evt.Payload,
+	}, nil
+
+}
+
+func (s *Storage) SetDone(id int) error  {
+	const op = "storage.postgres.SetDone"
+
+	stmt, err := s.px.Prepare(context.Background(), "set_done" ,`UPDATE events SET status = 'done' WHERE id = $1`)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	_, err = s.px.Exec(context.Background(), stmt.Name, id)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+
+	return nil
 }
 
 func (s *Storage) GetURL(alias string) (string, error) {
 	const op = "storage.postgres.GetURL"
 	var url string
 
-	err := s.pool.QueryRow(context.Background(), `
+	err := s.px.QueryRow(context.Background(), `
 		SELECT url
 		FROM url
 		WHERE alias = $1;
@@ -89,7 +195,7 @@ func (s *Storage) DeleteURL(alias string) error {
 	const op = "storage.postgres.DeleteURL"
 	var id int
 
-	err := s.pool.QueryRow(context.Background(), `
+	err := s.px.QueryRow(context.Background(), `
 		DELETE FROM url
 		WHERE alias = $1
 		RETURNING id;
