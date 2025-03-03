@@ -29,18 +29,7 @@ func New(storagePath string) (*Storage, error) {
 	}
 
 	_, err = connect.Exec(context.Background(), `
-	CREATE TABLE IF NOT EXISTS url(
-		id SERIAL PRIMARY KEY,
-		alias TEXT NOT NULL UNIQUE,
-		url TEXT NOT NULL);
-
-	CREATE TABLE IF NOT EXISTS events (
-		id SERIAL PRIMARY KEY,
-		event_type TEXT NOT NULL,
-		payload TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'new' CHECK(status IN('new', 'done')),
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
+	
 	`)
 
 	if err != nil {

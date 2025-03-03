@@ -1,0 +1,1 @@
+go run ./cmd/url-shorener/main.go
