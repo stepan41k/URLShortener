@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -36,10 +37,10 @@ func main() {
 	log.Debug("debug messages are enabled")
 	log.Error("error messages are enabled")
 
-	storage, err := postgres.New(cfg.StoragePath)
+	storage, err := postgres.New(fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=%s",
+		cfg.PSQL.Host, cfg.PSQL.Port, cfg.PSQL.Username, cfg.PSQL.DBName, os.Getenv("DB_PASSWORD"), cfg.PSQL.SSLMode))
 	if err != nil {
 		log.Error("failed to init storage", sl.Err(err))
-		os.Exit(1)
 	}
 
 	router := chi.NewRouter()
@@ -53,7 +54,7 @@ func main() {
 
 	router.Route("/url", func(r chi.Router) {
 		r.Use(middleware.BasicAuth("url-shortener", map[string]string{
-			cfg.HTTPServer.User: cfg.HTTPServer.Password,
+			cfg.Server.User: cfg.Server.Password,
 		}))
 
 		r.Post("/", save.New(log, storage))
@@ -62,14 +63,14 @@ func main() {
 
 	router.Get("/{alias}", redirect.New(log, storage))
 	
-	log.Info("starting server", slog.String("address", cfg.Address))
+	log.Info("starting server", slog.String("address", cfg.Server.Address))
 
 	srv := &http.Server{
-		Addr: cfg.Address,
+		Addr: cfg.Server.Address,
 		Handler: router,
-		ReadTimeout: cfg.HTTPServer.Timeout,
-		WriteTimeout: cfg.HTTPServer.Timeout,
-		IdleTimeout: cfg.HTTPServer.IdleTimeout,
+		ReadTimeout: cfg.Server.Timeout,
+		WriteTimeout: cfg.Server.Timeout,
+		IdleTimeout: cfg.Server.IdleTimeout,
 	}
 
 	sender := eventsender.New(storage, log)

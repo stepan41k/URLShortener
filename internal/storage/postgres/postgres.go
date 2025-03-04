@@ -28,14 +28,6 @@ func New(storagePath string) (*Storage, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	_, err = connect.Exec(context.Background(), `
-	
-	`)
-
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
-	}
-
 	return &Storage{px: connect}, nil
 }
 
